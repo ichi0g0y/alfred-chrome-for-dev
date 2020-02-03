@@ -7,5 +7,5 @@ for [Alfred](http://www.alfredapp.com/) Extension.
 ## What are you doing inside?
 
 ```zsh
- open -na Google\ Chrome --args --disable-web-security
+open -na Google\ Chrome --args --disable-web-security --user-data-dir="/tmp/chrome_dev"
 ```
