@@ -1,0 +1,81 @@
+name: Basic Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine commit range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -e
+          case "$EVENT" in
+            pull_request|pull_request_target)
+              echo "base=origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+              echo "head=HEAD" >> "$GITHUB_OUTPUT"
+              ;;
+            push)
+              if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+                echo "base=HEAD~1" >> "$GITHUB_OUTPUT"
+                echo "head=HEAD" >> "$GITHUB_OUTPUT"
+              else
+                echo "base=$BEFORE" >> "$GITHUB_OUTPUT"
+                echo "head=$AFTER" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              echo "base=origin/$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+              echo "head=HEAD" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Validate commit messages
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -e
+          if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+            echo "Base $BASE not reachable, checking single latest commit"
+            BASE="${HEAD}~1"
+          fi
+          BAD=$(git log --pretty=format:"%H|%s%n%b%n---END---" "$BASE..$HEAD" 2>/dev/null \
+            | grep -iE "co-authored-by:.*(claude|codex|chatgpt|openai|anthropic)|🤖 generated with \[(claude|codex|gpt)" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Disallowed trailer/footer detected in commit messages"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "OK"
+
+      - name: Validate PR body
+        if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -z "$PR_BODY" ]; then
+            exit 0
+          fi
+          if echo "$PR_BODY" | grep -iqE "🤖 generated with \[(claude|codex|gpt)|co-authored.*(anthropic|openai)\.com"; then
+            echo "::error::Disallowed trailer in PR body"
+            echo "$PR_BODY" | grep -iE "🤖 generated with \[(claude|codex|gpt)|co-authored.*(anthropic|openai)\.com"
+            exit 1
+          fi
+          echo "OK"
